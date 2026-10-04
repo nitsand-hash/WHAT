@@ -13,3 +13,8 @@ No build step: open `index.html` in a browser (or serve the folder with any stat
 ## Data
 
 Everything is stored in the browser's `localStorage` (key `what.v1`). Use **Export backup / Import backup** in the sidebar to move data between browsers.
+
+## Deploying to GitHub Pages
+
+`.github/workflows/pages.yml` publishes the site on every push to `main`.
+One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
