@@ -16,5 +16,5 @@ Everything is stored in the browser's `localStorage` (key `what.v1`). Use **Expo
 
 ## Deploying to GitHub Pages
 
-`.github/workflows/pages.yml` publishes the site on every push to `main`.
+`.github/workflows/pages.yml` publishes the site on every push to the default branch (`main` or the current feature branch).
 One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
