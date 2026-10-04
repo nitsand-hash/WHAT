@@ -21,7 +21,7 @@ Fill in `config.js` to switch to a shared Supabase database with email login and
 - `@WHAT …` in Slack creates an alert (keyword parser, or Claude if `ANTHROPIC_API_KEY` is set).
 - New High/Critical alerts, status changes and a daily summary are posted back to Slack.
 
-Step-by-step instructions (Hebrew): [SETUP.md](SETUP.md). Unit tests for the Slack logic: `node --test tests/`.
+Step-by-step instructions (Hebrew): [SETUP.md](SETUP.md). Unit tests for the Slack logic: `node --test tests/*.test.ts`.
 
 ## Deploying to GitHub Pages
 
