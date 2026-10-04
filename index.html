@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What Happened Today</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main">
+      <div class="cover"></div>
+      <div class="page">
+        <div class="page-icon">👀</div>
+        <input id="title" class="title" spellcheck="false" aria-label="Page title" placeholder="Untitled">
+        <div class="datebar" id="datebar"></div>
+
+        <section id="stats" class="stats"></section>
+
+        <h2 class="section-title">Daily summary</h2>
+        <div id="editor" class="editor"></div>
+
+        <h2 class="section-title">Customer alerts</h2>
+        <div class="db-toolbar">
+          <div class="tabs" id="viewTabs">
+            <button data-view="table">Table</button>
+            <button data-view="board">Board</button>
+          </div>
+          <div class="spacer"></div>
+          <div class="tabs" id="scopeTabs">
+            <button data-scope="day">This day</button>
+            <button data-scope="all">All days</button>
+          </div>
+          <select id="statusFilter" aria-label="Filter by status">
+            <option value="all">All statuses</option>
+            <option value="New">New</option>
+            <option value="In progress">In progress</option>
+            <option value="Resolved">Resolved</option>
+          </select>
+          <input id="search" type="search" placeholder="Search…" aria-label="Search alerts">
+          <button class="btn primary" data-act="add">New</button>
+        </div>
+        <div id="db"></div>
+      </div>
+    </main>
+
+    <aside id="peek" class="peek" aria-label="Alert details"></aside>
+  </div>
+
+  <div id="slash" class="menu slash" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+  <datalist id="customers"></datalist>
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+
+  <script src="app.js"></script>
+</body>
+</html>
