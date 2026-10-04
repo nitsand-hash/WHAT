@@ -63,7 +63,13 @@
    * ------------------------------------------------------------------ */
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  const uid = () => {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  };
   const pad = (n) => String(n).padStart(2, '0');
   const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const fromISO = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -83,8 +89,16 @@
    * ------------------------------------------------------------------ */
   const blankState = () => ({ version: 1, title: 'What Happened Today', view: 'table', days: {}, alerts: [] });
 
+  // Remote mode (shared Supabase database) is on when config.js has a project URL + anon key.
+  const cfg = window.WHAT_CONFIG || {};
+  const REMOTE = !!(cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase);
+  const sb = REMOTE ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey) : null;
+  const META_KEY = 'what.meta';
+  const META = { meta: true }; // save(META) = only the per-browser settings changed
+
   function load() {
     try {
+      if (REMOTE) return { ...blankState(), ...(JSON.parse(localStorage.getItem(META_KEY)) || {}), days: {}, alerts: [] };
       const s = JSON.parse(localStorage.getItem(KEY));
       if (s && Array.isArray(s.alerts) && s.days && typeof s.days === 'object') return { ...blankState(), ...s };
     } catch (_) { /* fall through */ }
@@ -94,21 +108,111 @@
   let state = load();
   const ui = { date: today(), scope: 'day', status: 'all', q: '', peekId: null };
 
-  let saveTimer = null;
-  function flush() {
-    clearTimeout(saveTimer);
-    saveTimer = null;
+  const saveMeta = () => {
+    try { localStorage.setItem(META_KEY, JSON.stringify({ title: state.title, view: state.view })); } catch (_) { /* storage unavailable */ }
+  };
+
+  // ----- local persistence -----
+  function flushLocal() {
     // Don't persist days that only contain empty text blocks.
     for (const [d, v] of Object.entries(state.days)) {
       if (!v.blocks.some((b) => b.type === 'divider' || b.text)) delete state.days[d];
     }
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) { /* storage unavailable */ }
   }
-  function save() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(flush, 250);
+
+  // ----- remote persistence (write-through to Supabase) -----
+  const dirtyAlerts = new Map(); // id -> alert object
+  const dirtyDays = new Set();   // YYYY-MM-DD
+  const deletedIds = new Set();
+  const remoteDays = new Set();  // days that already have a row in day_notes
+  let syncing = false, syncAgain = false, retryMs = 2000, syncState = 'saved', me = null;
+
+  const toRow = (a) => ({ id: a.id, customer: a.customer, type: a.type, severity: a.severity, status: a.status, platform: a.platform, notes: a.notes, alert_date: a.date });
+  const fromRow = (r) => ({
+    id: r.id, customer: r.customer ?? '', type: r.type, severity: r.severity, status: r.status, platform: r.platform ?? '',
+    notes: r.notes ?? '', date: r.alert_date, createdAt: Date.parse(r.created_at) || 0, source: r.source,
+  });
+  const hasContent = (blocks) => blocks.some((b) => b.type === 'divider' || b.text);
+
+  const syncText = () => ({ saved: 'All changes saved', saving: 'Saving…', error: "Can't reach the server – retrying…" }[syncState]);
+  function setSyncState(v) {
+    syncState = v;
+    const el = $('#syncStatus');
+    if (el) el.textContent = syncText();
   }
+
+  async function syncRemote() {
+    if (syncing) { syncAgain = true; return; }
+    syncing = true;
+    setSyncState('saving');
+    try {
+      do {
+        syncAgain = false;
+        const alerts = [...dirtyAlerts.values()], days = [...dirtyDays], dels = [...deletedIds];
+        dirtyAlerts.clear(); dirtyDays.clear(); deletedIds.clear();
+        try {
+          if (alerts.length) {
+            const { error } = await sb.from('alerts').upsert(alerts.map(toRow));
+            if (error) throw error;
+          }
+          const rows = days
+            .map((d) => ({ note_date: d, blocks: (state.days[d] || { blocks: [] }).blocks }))
+            .filter((r) => hasContent(r.blocks) || remoteDays.has(r.note_date));
+          if (rows.length) {
+            const { error } = await sb.from('day_notes').upsert(rows);
+            if (error) throw error;
+            rows.forEach((r) => remoteDays.add(r.note_date));
+          }
+          if (dels.length) {
+            const { error } = await sb.from('alerts').delete().in('id', dels);
+            if (error) throw error;
+          }
+        } catch (err) {
+          // Put the work back so the retry sends it (unless it was deleted/re-edited meanwhile).
+          for (const a of alerts) if (!deletedIds.has(a.id) && !dirtyAlerts.has(a.id)) dirtyAlerts.set(a.id, a);
+          for (const d of days) dirtyDays.add(d);
+          for (const id of dels) if (!dirtyAlerts.has(id)) deletedIds.add(id);
+          throw err;
+        }
+      } while (syncAgain);
+      retryMs = 2000;
+      setSyncState('saved');
+    } catch (err) {
+      console.error('Sync failed', err);
+      setSyncState('error');
+      setTimeout(scheduleSync, retryMs);
+      retryMs = Math.min(retryMs * 2, 30000);
+    } finally {
+      syncing = false;
+    }
+  }
+
+  let saveTimer = null;
+  function scheduleSync() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(REMOTE ? syncRemote : flushLocal, REMOTE ? 400 : 250);
+  }
+  function flush() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if (REMOTE) { saveMeta(); return syncRemote(); }
+    flushLocal();
+  }
+
+  /** Mark something as changed. Pass an alert (alert edited), META (title/view), or nothing (current day's notes). */
+  function save(target) {
+    if (target === META) { if (REMOTE) saveMeta(); else scheduleSync(); return; }
+    if (REMOTE) {
+      if (target && target.customer !== undefined) dirtyAlerts.set(target.id, target);
+      else dirtyDays.add(ui.date);
+    }
+    scheduleSync();
+  }
+  function queueDelete(id) { if (REMOTE) { dirtyAlerts.delete(id); deletedIds.add(id); } scheduleSync(); }
+
   window.addEventListener('beforeunload', flush);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
 
   const find = (id) => state.alerts.find((a) => a.id === id);
   const newBlock = (type = 'text', text = '') => ({ id: uid(), type, text, checked: false });
@@ -138,8 +242,11 @@
       <div class="sb-spacer"></div>
       <div class="sb-label">Data</div>
       <button class="sb-item" data-act="export">Export backup</button>
-      <button class="sb-item" data-act="import">Import backup</button>
-      <div class="sb-note">Everything is saved in this browser only.</div>`;
+      ${REMOTE
+        ? `<div class="sb-note"><span id="syncStatus">${syncText()}</span><br>${esc(me ? me.email : '')}</div>
+           <button class="sb-item" data-act="signout">Sign out</button>`
+        : `<button class="sb-item" data-act="import">Import backup</button>
+           <div class="sb-note">Everything is saved in this browser only.</div>`}`;
   }
 
   function renderHeader() {
@@ -213,7 +320,9 @@
   }
 
   function emptyMessage() {
-    if (!state.alerts.length) return 'No alerts yet. Add one with <b>New</b>, or <button class="link-btn" data-act="sample">load sample data</button> to try it out.';
+    if (!state.alerts.length) return REMOTE
+      ? 'No alerts yet. Add one with <b>New</b>, or tag <b>@WHAT</b> in Slack.'
+      : 'No alerts yet. Add one with <b>New</b>, or <button class="link-btn" data-act="sample">load sample data</button> to try it out.';
     if (ui.q || ui.status !== 'all') return 'No alerts match the current filters.';
     return ui.scope === 'day' ? 'Nothing logged for this day yet.' : 'No alerts.';
   }
@@ -307,7 +416,7 @@
     };
     state.alerts.push(a);
     if (state.view === 'table' && ui.status !== 'all' && ui.status !== status) { ui.status = 'all'; renderToolbar(); }
-    save();
+    save(a);
     refreshAlerts();
     if (state.view === 'table') {
       const input = $(`tr[data-id="${a.id}"] input[data-field="customer"]`);
@@ -335,11 +444,12 @@
     if (i < 0) return;
     const [removed] = state.alerts.splice(i, 1);
     if (ui.peekId === id) ui.peekId = null;
-    save();
+    queueDelete(id);
     refreshAlerts();
     toast('Alert deleted', () => {
       state.alerts.splice(Math.min(i, state.alerts.length), 0, removed);
-      save();
+      deletedIds.delete(id);
+      save(removed);
       refreshAlerts();
     });
   }
@@ -622,7 +732,7 @@
     if (pick) {
       const a = find(pick.dataset.id);
       const field = pick.dataset.pick;
-      if (a) openMenu(pick, OPTIONS[field], a[field], (v) => { a[field] = v; save(); refreshAlerts(); });
+      if (a) openMenu(pick, OPTIONS[field], a[field], (v) => { a[field] = v; save(a); refreshAlerts(); });
       return;
     }
 
@@ -630,7 +740,7 @@
     if (dateBtn && dateBtn.classList.contains('sb-item')) { goto(dateBtn.dataset.date); return; }
 
     const view = t.closest('[data-view]');
-    if (view) { state.view = view.dataset.view; save(); renderToolbar(); renderDb(); return; }
+    if (view) { state.view = view.dataset.view; save(META); renderToolbar(); renderDb(); return; }
     const scope = t.closest('[data-scope]');
     if (scope) { ui.scope = scope.dataset.scope; renderToolbar(); renderDb(); return; }
 
@@ -648,6 +758,7 @@
         case 'export': exportData(); break;
         case 'import': $('#importFile').click(); break;
         case 'sample': loadSample(); break;
+        case 'signout': signOut(); break;
       }
       return;
     }
@@ -659,14 +770,14 @@
   document.addEventListener('input', (e) => {
     const t = e.target;
     if (t.id === 'search') { ui.q = t.value.trim().toLowerCase(); renderDb(); return; }
-    if (t.id === 'title') { state.title = t.value; document.title = t.value || 'What Happened Today'; save(); return; }
+    if (t.id === 'title') { state.title = t.value; document.title = t.value || 'What Happened Today'; save(META); return; }
     const f = t.dataset && t.dataset.field;
     if (!f || f === 'date') return;
     const host = t.closest('[data-id]');
     const a = host && find(host.dataset.id);
     if (!a) return;
     a[f] = t.value;
-    save();
+    save(a);
     if (t.tagName === 'TEXTAREA') autosize(t);
     if (host.id === 'peek') {
       renderDb(); // keep table/board in sync while editing in the side panel
@@ -683,7 +794,7 @@
     if (t.id === 'importFile') { importData(t); return; }
     if (t.dataset && t.dataset.field === 'date') {
       const a = find(t.closest('[data-id]')?.dataset.id);
-      if (a && t.value) { a.date = t.value; save(); refreshAlerts(); }
+      if (a && t.value) { a.date = t.value; save(a); refreshAlerts(); }
       else if (a) t.value = a.date;
     }
   });
@@ -720,7 +831,7 @@
     if (!col || !dragId) return;
     e.preventDefault();
     const a = find(dragId);
-    if (a && a.status !== col.dataset.status) { a.status = col.dataset.status; save(); refreshAlerts(); }
+    if (a && a.status !== col.dataset.status) { a.status = col.dataset.status; save(a); refreshAlerts(); }
   });
 
   /* ------------------------------------------------------------------ *
@@ -785,8 +896,128 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * Remote mode: login, initial load, live updates
+   * ------------------------------------------------------------------ */
+  let refreshPending = false;
+  const typingInDb = () => {
+    const ae = document.activeElement;
+    return !!(ae && ae.matches && ae.matches('input, textarea') && ae.closest('#db, #peek'));
+  };
+  // Don't yank the table out from under someone who is typing in it.
+  function scheduleRefresh() {
+    if (typingInDb()) { refreshPending = true; return; }
+    refreshAlerts();
+  }
+  document.addEventListener('focusout', () => {
+    if (!refreshPending) return;
+    setTimeout(() => { if (!typingInDb()) { refreshPending = false; refreshAlerts(); } }, 0);
+  });
+
+  function onAlertChange(p) {
+    if (p.eventType === 'DELETE') {
+      const i = state.alerts.findIndex((a) => a.id === p.old.id);
+      if (i < 0) return;
+      state.alerts.splice(i, 1);
+      if (ui.peekId === p.old.id) ui.peekId = null;
+    } else {
+      const next = fromRow(p.new);
+      if (dirtyAlerts.has(next.id) || deletedIds.has(next.id)) return; // our own pending change wins
+      const cur = state.alerts.find((a) => a.id === next.id);
+      if (cur) Object.assign(cur, next); else state.alerts.push(next);
+    }
+    scheduleRefresh();
+  }
+
+  function onDayChange(p) {
+    const r = p.new && p.new.note_date ? p.new : p.old;
+    if (!r || dirtyDays.has(r.note_date)) return;
+    if (p.eventType === 'DELETE') { delete state.days[r.note_date]; remoteDays.delete(r.note_date); }
+    else {
+      // While someone is typing in today's notes, keep their text; their next save wins.
+      if (r.note_date === ui.date && editor.contains(document.activeElement)) return;
+      state.days[r.note_date] = { blocks: Array.isArray(r.blocks) ? r.blocks : [] };
+      remoteDays.add(r.note_date);
+    }
+    if (r.note_date === ui.date) renderBlocks();
+  }
+
+  function subscribeRealtime() {
+    sb.channel('what-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, onAlertChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'day_notes' }, onDayChange)
+      .subscribe();
+  }
+
+  async function loadRemote() {
+    const [a, d] = await Promise.all([
+      sb.from('alerts').select('*').order('created_at'),
+      sb.from('day_notes').select('note_date, blocks'),
+    ]);
+    if (a.error || d.error) throw a.error || d.error;
+    state.alerts = a.data.map(fromRow);
+    state.days = {};
+    remoteDays.clear();
+    for (const r of d.data) {
+      state.days[r.note_date] = { blocks: Array.isArray(r.blocks) ? r.blocks : [] };
+      remoteDays.add(r.note_date);
+    }
+  }
+
+  const loginEl = $('#login');
+  function showLogin(msg) {
+    document.body.classList.add('locked');
+    loginEl.hidden = false;
+    $('#loginMsg').textContent = msg || '';
+  }
+
+  let booted = false;
+  async function startRemote(session) {
+    if (booted) return;
+    me = session.user;
+    const { data: isMember, error } = await sb.rpc('is_team_member');
+    if (error || !isMember) {
+      await sb.auth.signOut();
+      showLogin(error ? 'Could not verify your access. Please try again.' : `${me.email} is not on the team list. Ask an admin to add it.`);
+      return;
+    }
+    try {
+      await loadRemote();
+    } catch (err) {
+      console.error(err);
+      showLogin('Could not load the data. Please refresh and try again.');
+      return;
+    }
+    booted = true;
+    loginEl.hidden = true;
+    document.body.classList.remove('locked');
+    renderAll();
+    subscribeRealtime();
+  }
+
+  async function signOut() {
+    await flush();
+    await sb.auth.signOut();
+    location.reload();
+  }
+
+  $('#loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('#loginEmail').value.trim();
+    if (!email) return;
+    $('#loginMsg').textContent = 'Sending…';
+    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+    $('#loginMsg').textContent = error ? `Couldn't send the link: ${error.message}` : 'Check your email and open the link to sign in.';
+  });
+
+  /* ------------------------------------------------------------------ *
    * Boot
    * ------------------------------------------------------------------ */
   document.title = state.title || 'What Happened Today';
-  renderAll();
+  if (!REMOTE) {
+    renderAll();
+  } else {
+    document.body.classList.add('locked');
+    sb.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT' && booted) location.reload(); });
+    sb.auth.getSession().then(({ data }) => (data.session ? startRemote(data.session) : showLogin()));
+  }
 })();

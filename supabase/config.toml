@@ -1,0 +1,12 @@
+# Minimal Supabase CLI config. The Slack functions are called by Slack / DB webhooks / cron,
+# not by a logged-in user, so JWT verification is off and each one checks its own secret instead.
+project_id = "what"
+
+[functions.slack-events]
+verify_jwt = false
+
+[functions.slack-notify]
+verify_jwt = false
+
+[functions.slack-daily-summary]
+verify_jwt = false

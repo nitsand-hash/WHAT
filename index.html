@@ -55,6 +55,20 @@
   <datalist id="customers"></datalist>
   <input type="file" id="importFile" accept="application/json,.json" hidden>
 
+  <div id="login" class="login" hidden>
+    <form id="loginForm" class="login-card">
+      <div class="login-icon">👀</div>
+      <h1>What Happened Today</h1>
+      <p>Sign in with your work email and we'll send you a magic link.</p>
+      <input type="email" id="loginEmail" required placeholder="you@company.com" autocomplete="email" aria-label="Email">
+      <button class="btn primary" type="submit">Send magic link</button>
+      <p id="loginMsg" class="login-msg" role="status"></p>
+    </form>
+  </div>
+
+  <!-- Shared mode (optional): fill in config.js. Without it the app stays local to this browser. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

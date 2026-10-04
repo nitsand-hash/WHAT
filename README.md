@@ -12,7 +12,16 @@ No build step: open `index.html` in a browser (or serve the folder with any stat
 
 ## Data
 
-Everything is stored in the browser's `localStorage` (key `what.v1`). Use **Export backup / Import backup** in the sidebar to move data between browsers.
+By default everything is stored in the browser's `localStorage` (key `what.v1`). Use **Export backup / Import backup** in the sidebar to move data between browsers.
+
+## Shared team mode + Slack (optional)
+
+Fill in `config.js` to switch to a shared Supabase database with email login and live updates, and deploy the functions in `supabase/functions` to connect Slack:
+
+- `@WHAT …` in Slack creates an alert (keyword parser, or Claude if `ANTHROPIC_API_KEY` is set).
+- New High/Critical alerts, status changes and a daily summary are posted back to Slack.
+
+Step-by-step instructions (Hebrew): [SETUP.md](SETUP.md). Unit tests for the Slack logic: `node --test tests/`.
 
 ## Deploying to GitHub Pages
 

@@ -293,3 +293,15 @@ tr:hover .row-del { opacity: 1; }
   .stat-cards { grid-template-columns: repeat(2, 1fr); }
   .title { font-size: 32px; }
 }
+
+/* ---------- login (shared mode) ---------- */
+body.locked .app { visibility: hidden; }
+.login { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.login-card { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; text-align: center; }
+.login-card h1 { margin: 0; font-size: 28px; }
+.login-card p { margin: 0; color: var(--text-muted); }
+.login-icon { font-size: 56px; line-height: 1; }
+.login-card input { height: 38px; border: 1px solid var(--border); border-radius: 6px; background: transparent; padding: 0 12px; outline: 0; }
+.login-card input:focus { border-color: var(--accent); }
+.login-card .btn { height: 38px; }
+.login-msg { min-height: 1.5em; font-size: 14px; }
