@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, claude/what-happened-today-dashboard-xggz4a]
+    branches: [main, claude/what-happened-today-dashboard-xggz4a, claude/existing-code-790u0n]
   workflow_dispatch:
 
 permissions:
@@ -22,10 +22,21 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client-reporting/package-lock.json
+      - name: Build client-reporting
+        working-directory: client-reporting
+        run: |
+          npm ci
+          npm run build
       - name: Collect site files
         run: |
           mkdir _site
           cp index.html styles.css app.js config.js _site/
+          cp -r client-reporting/dist _site/client-reporting
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
