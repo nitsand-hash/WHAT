@@ -1,4 +1,4 @@
-// Demo data for the local BoardSDK. Dates are relative to "now" so the dashboard always has activity today.
+// Demo data for the local BoardSDK (used when src/api/data.json is absent). Dates are relative to "now" so the dashboard always has activity today.
 const day = 86400000;
 const ago = (days, hours = 0) => new Date(Date.now() - days * day - hours * 3600000);
 const at = (days, h, m = 0) => { const d = ago(days); d.setHours(h, m, 0, 0); return d; };

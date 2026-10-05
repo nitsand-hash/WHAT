@@ -1,15 +1,30 @@
 // Local stand-in for the hosted board SDK. It mimics the query-builder API used by the app
 // (items/aggregate/item(...).post/notify/update) on top of in-memory seed data, persisting
 // posted updates and column edits in localStorage so the demo behaves like a real board.
-import { BASE_CLIENTS, UPDATES, IMPO_ROWS } from './seed';
+import { BASE_CLIENTS as SAMPLE_CLIENTS, UPDATES as SAMPLE_UPDATES, IMPO_ROWS as SAMPLE_IMPO } from './seed';
 
-const STORE = 'client-reporting.demo.v1';
+// src/api/data.json is produced by scripts/import-xlsx.py from the board export. It holds real client
+// data, so it is git-ignored; without it the app falls back to the demo data in seed.js.
+const real = import.meta.glob('./data.json', { eager: true })['./data.json']?.default;
+const data = real ?? { clients: SAMPLE_CLIENTS, updates: SAMPLE_UPDATES };
+const STORE = real ? 'client-reporting.data.v1' : 'client-reporting.demo.v1';
 const load = () => { try { return JSON.parse(localStorage.getItem(STORE)) ?? {}; } catch { return {}; } };
 const save = s => { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { /* storage unavailable */ } };
 const delay = (v) => new Promise(r => setTimeout(() => r(v), 120));
 
 const DATE_COLS = ['lastTouchpoint', 'nextMonthlyCall', 'renewalDate', 'peakEventDate', 'updatedAt'];
 const reviveDates = o => { DATE_COLS.forEach(k => { if (typeof o[k] === 'string') o[k] = new Date(o[k]); }); return o; };
+
+const UPDATES = data.updates;
+const latestUpdate = id => UPDATES.filter(u => u.itemId === id).reduce((m, u) => Math.max(m, new Date(u.created_at)), 0);
+// A client counts as "changed" when it was last touched or last received an update, whichever is newer.
+const BASE_CLIENTS = data.clients.map(c => reviveDates({
+  ...c,
+  updatedAt: new Date(Math.max(c.lastTouchpoint ? new Date(c.lastTouchpoint) : 0, latestUpdate(c.id))),
+}));
+const IMPO_ROWS = real
+  ? data.clients.filter(c => c.loa || c.trademarkDoc).map(c => ({ id: c.id, name: c.name, clients: c.name, loa: c.loa, trademarkDoc: c.trademarkDoc }))
+  : SAMPLE_IMPO;
 
 function clients() {
   const patches = load().patches ?? {};
